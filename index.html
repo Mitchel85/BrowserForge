@@ -444,6 +444,7 @@
                 bracketPairColorization: { enabled: true },
             });
             editor.onDidChangeModelContent(() => {
+                if (isLoadingFile) return;
                 updateStatusBar();
                 markUnsaved();
                 debouncedSave();
@@ -451,12 +452,13 @@
         });
 
         let saveTimeout;
+        let isLoadingFile = false;
         function debouncedSave() {
             clearTimeout(saveTimeout);
-            saveTimeout = setTimeout(() => {
+            saveTimeout = setTimeout(async () => {
                 if (currentActiveFilePath && !isNonTextFile(currentActiveFilePath)) {
-                    saveCurrentTextFile();
-                    showSavedStatus();
+                    const ok = await saveCurrentTextFile();
+                    if (ok) showSavedStatus(); else markUnsaved();
                 }
             }, 1500);
         }
@@ -488,16 +490,44 @@
             return (bytes / 1048576).toFixed(1) + ' MB';
         }
 
+        function escapeHtml(value) {
+            return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        // Minimal-Sanitizer für Markdown-/AI-Ausgaben (markiert keine Event-Handler,
+        // Script-/Iframe-Tags oder javascript:-URLs). Kein externes DOMPurify nötig.
+        function sanitizeHtml(html) {
+            const doc = new DOMParser().parseFromString(String(html), 'text/html');
+            const banned = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'LINK', 'META', 'FORM', 'INPUT', 'BUTTON', 'TEXTAREA', 'SELECT']);
+            doc.querySelectorAll('*').forEach(el => {
+                if (banned.has(el.tagName)) { el.remove(); return; }
+                Array.from(el.attributes).forEach(attr => {
+                    const n = attr.name.toLowerCase(), v = attr.value;
+                    if (n.startsWith('on') || n === 'srcdoc' || ((n === 'href' || n === 'src' || n === 'xlink:href') && /^\s*(javascript|data:text\/html)/i.test(v))) {
+                        el.removeAttribute(attr.name);
+                    }
+                });
+            });
+            return doc.body.innerHTML;
+        }
+
         // =========================================================
         //  FILESYSTEM LOGIC
         // =========================================================
         async function mountFolder() {
+            if (typeof window.showDirectoryPicker !== 'function') {
+                appendToChat('System (Error)', '❌ Dieser Browser unterstützt die File System Access API nicht. Bitte Chrome oder Edge verwenden.', true);
+                return;
+            }
             try {
                 dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-                appendToChat('System', `✓ Workspace mounted: <strong>${dirHandle.name}</strong>`, true);
+                appendToChat('System', `✓ Workspace mounted: ${escapeHtml(dirHandle.name)}`, true);
                 await refreshFileTree();
             } catch (error) {
-                if (error.name !== 'AbortError') console.error(error);
+                if (error.name !== 'AbortError') {
+                    appendToChat('System (Error)', `❌ Workspace konnte nicht geöffnet werden: ${error.message}`, true);
+                    console.error(error);
+                }
             }
         }
 
@@ -566,13 +596,13 @@
 
                 if (entry.kind === 'file') {
                     const icon = getFileIcon(entry.name);
-                    itemDiv.innerHTML = `${icon} <span class="truncate">${entry.name}</span>`;
+                    itemDiv.innerHTML = `${icon} <span class="truncate">${escapeHtml(entry.name)}</span>`;
                     fileHandles.set(fullPath, entry);
                     itemDiv.onclick = (e) => openFile(fullPath, e);
                     container.appendChild(itemDiv);
                 } else {
                     const chevron = '<i class="fa-solid fa-chevron-right text-[8px] text-gray-600 transition-transform folder-chevron"></i>';
-                    itemDiv.innerHTML = `${chevron} <i class="fa-solid fa-folder text-yellow-500"></i> <span class="truncate">${entry.name}</span>`;
+                    itemDiv.innerHTML = `${chevron} <i class="fa-solid fa-folder text-yellow-500"></i> <span class="truncate">${escapeHtml(entry.name)}</span>`;
                     const subContainer = document.createElement('div');
                     subContainer.className = 'pl-3.5 border-l border-gray-800 ml-1.5 mt-0.5 hidden';
                     itemDiv.onclick = () => {
@@ -635,7 +665,7 @@
                             const sheet = workbook.Sheets[sheetName];
                             currentExcelJson[sheetName] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
                             const htmlTable = XLSX.utils.sheet_to_html(sheet);
-                            htmlOutput += `<h3 class="text-blue-400 font-bold text-sm mb-1">📊 ${sheetName}</h3>`;
+                            htmlOutput += `<h3 class="text-blue-400 font-bold text-sm mb-1">📊 ${escapeHtml(sheetName)}</h3>`;
                             htmlOutput += `<div class="overflow-auto border border-gray-700 rounded">${htmlTable}</div>`;
                         }
                         htmlOutput += '</div>';
@@ -645,7 +675,7 @@
                             t.querySelectorAll('td, th').forEach(c => { c.className = 'border border-gray-700 px-2 py-1'; });
                         });
                     } catch (err) {
-                        document.getElementById('office-data-container').innerHTML = `<div class="text-red-400">Error reading Excel file: ${err.message}</div>`;
+                        document.getElementById('office-data-container').innerHTML = `<div class="text-red-400">Error reading Excel file: ${escapeHtml(err.message)}</div>`;
                     }
                 };
                 reader.readAsArrayBuffer(file);
@@ -661,13 +691,26 @@
                         currentDocxText = (await mammoth.extractRawText({ arrayBuffer: e.target.result })).value;
                         document.getElementById('office-data-container').innerHTML = `
                             <h3 class="text-blue-400 font-bold text-sm mb-2">📝 Word Document</h3>
-                            <div class="prose prose-invert prose-sm max-w-none bg-gray-900 p-4 rounded border border-gray-700">${result.value}</div>`;
+                            <div class="prose prose-invert prose-sm max-w-none bg-gray-900 p-4 rounded border border-gray-700">${sanitizeHtml(result.value)}</div>`;
                     } catch (err) {
-                        document.getElementById('office-data-container').innerHTML = `<div class="text-red-400">Error reading Word file: ${err.message}</div>`;
+                        document.getElementById('office-data-container').innerHTML = `<div class="text-red-400">Error reading Word file: ${escapeHtml(err.message)}</div>`;
                     }
                 };
                 reader.readAsArrayBuffer(file);
                 appendToChat('System', `📝 Word document loaded: ${path}`, true);
+
+            } else if (ext === 'pdf') {
+                hideCodeEditor();
+                const container = document.getElementById('office-data-container');
+                container.classList.remove('hidden');
+                container.innerHTML = '';
+                const embed = document.createElement('embed');
+                embed.src = URL.createObjectURL(file);
+                embed.type = 'application/pdf';
+                embed.className = 'w-full';
+                embed.style.height = '70vh';
+                container.appendChild(embed);
+                appendToChat('System', `📄 PDF loaded: ${path}`, true);
 
             } else {
                 showCodeEditor();
@@ -683,7 +726,9 @@
                 };
                 const lang = langMap[ext] || 'plaintext';
                 monaco.editor.setModelLanguage(editor.getModel(), lang);
+                isLoadingFile = true;
                 editor.setValue(text);
+                isLoadingFile = false;
                 editor.revealLine(1);
 
                 document.getElementById('status-file').textContent = path;
@@ -703,15 +748,17 @@
         }
 
         async function saveCurrentTextFile() {
-            if (!currentActiveFilePath || isNonTextFile(currentActiveFilePath)) return;
+            if (!currentActiveFilePath || isNonTextFile(currentActiveFilePath)) return false;
             try {
                 const handle = fileHandles.get(currentActiveFilePath);
-                if (!handle) return;
+                if (!handle) return false;
                 const writable = await handle.createWritable();
                 await writable.write(editor.getValue());
                 await writable.close();
+                return true;
             } catch (err) {
                 appendToChat('System (Error)', `Save failed: ${err.message}`, true);
+                return false;
             }
         }
 
@@ -802,12 +849,12 @@
             div.className = `mb-3 pb-2 border-b border-gray-900 ${sender === 'User' ? 'msg-user' : isSystem ? 'msg-system' : 'msg-ai'}`;
 
             const color = sender === 'User' ? 'text-blue-400' : (isSystem ? 'text-green-500' : 'text-purple-400');
-            const content = sender === 'BrowserForge' ? marked.parse(message) : message;
+            const content = sender === 'BrowserForge' ? sanitizeHtml(marked.parse(message)) : escapeHtml(message);
             const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
             div.innerHTML = `
                 <div class="flex justify-between items-center mb-1">
-                    <span class="${color} font-bold text-xs uppercase tracking-wider">${sender}</span>
+                    <span class="${color} font-bold text-xs uppercase tracking-wider">${escapeHtml(sender)}</span>
                     <span class="text-gray-700 text-[9px] font-mono">${time}</span>
                 </div>
                 <div class="text-gray-300 prose prose-invert prose-xs max-w-none">${content}</div>`;
@@ -849,6 +896,10 @@ File tree:
 ${Array.from(fileHandles.keys()).map(f => '  ' + f).join('\n')}
 `;
             if (currentActiveFilePath && !isNonTextFile(currentActiveFilePath) && editor) {
+                const secretFile = /(^|\/)(\.env(\..*)?|.*\.(pem|key|p12|pfx)|id_rsa|credentials|secrets?)(\/|$)/i.test(currentActiveFilePath);
+                if (secretFile) {
+                    context += `\nCurrently opened file: "${currentActiveFilePath}" — content withheld for privacy (secret file).\n`;
+                } else {
                 const code = editor.getValue();
                 if (code.length < 15000) {
                     context += `\nCurrently opened file: "${currentActiveFilePath}"
@@ -862,6 +913,7 @@ ${code}
 ${code.substring(0, 5000)}
 \`\`\`
 `;
+                }
                 }
             }
 
@@ -968,7 +1020,7 @@ Always reply in English.`;
 
         // --- API Caller: Gemini ---
         async function callGemini(baseUrl, model, apiKey, systemPrompt) {
-            const endpoint = `${baseUrl}/models/${model}:generateContent?key=${apiKey}`;
+            const endpoint = `${baseUrl}/models/${model}:generateContent`;
 
             const parts = [{ text: systemPrompt }];
             if (conversationHistory.length > 1) {
@@ -985,7 +1037,7 @@ Always reply in English.`;
             const payload = { contents: [{ parts }] };
             const res = await fetch(endpoint, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
                 body: JSON.stringify(payload)
             });
             const data = await res.json();
@@ -1084,7 +1136,7 @@ Always reply in English.`;
                 }
             }
 
-            const payload = { model: model, messages: messages, temperature: 0.3 };
+            const payload = { model: model, messages: messages, temperature: 0.3, max_tokens: 4096 };
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: headers,

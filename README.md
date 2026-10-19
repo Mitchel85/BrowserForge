@@ -1,14 +1,14 @@
 # BrowserForge 🔨
 
-BrowserForge is a zero-setup, local AI IDE and Native Web Agent that runs entirely in your browser. It allows you to mount a local workspace, edit code, view documents, and leverage various flagship AI models to autonomously perform file operations right on your machine.
+BrowserForge is a zero-setup AI IDE and Native Web Agent that runs in your browser. It allows you to mount a local workspace, edit code, view documents, and leverage various flagship AI models to autonomously perform file operations right on your machine.
 
 ## ✨ Features
-* **Zero Backend:** Runs 100% locally in your browser using the [File System Access API](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API).
+* **Zero Backend:** No server component — the UI runs in your browser. UI libraries (Monaco, Tailwind, SheetJS, Mammoth, marked) are loaded from CDNs, so an internet connection is required. Your workspace files stay local.
 * **Multi-Provider AI:** Built-in support for OpenAI, Google Gemini, Anthropic Claude, xAI, Mistral, DeepSeek, local models via Ollama/LM Studio, and more.
-* **Smart File Editor:** Integrated [Monaco Editor](https://microsoft.github.io/monaco-editor/) with syntax highlighting and code formatting.
-* **Document Support:** Preview images, read Excel (`.xlsx`) files, and parse Word (`.docx`) documents natively.
+* **Smart File Editor:** Integrated [Monaco Editor](https://microsoft.github.io/monaco-editor/) with syntax highlighting.
+* **Document Support:** Preview images and PDFs, read Excel (`.xlsx`) files, and parse Word (`.docx`) documents natively.
 * **Voice Dictation:** Speak your prompts directly to the agent.
-* **Privacy First:** Your API keys are strictly used on the client side and never sent to a third-party server besides the AI provider.
+* **Privacy First:** API keys stay in the browser. When you send a prompt, the file tree and the content of the currently open non-secret file are sent to the selected AI provider — secret files (`.env`, `*.pem`, keys, credentials) are excluded automatically.
 
 ## 🚀 How to Use
 1. Clone the repository or simply open `index.html` in a modern browser (Chrome/Edge recommended for File System API support).
