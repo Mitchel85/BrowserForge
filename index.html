@@ -5,11 +5,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BrowserForge - Local AI IDE</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    <script>
+        // CDN-Failure-Tracking: jeder CDN-Tag meldet sich bei Ladefehler.
+        window.__cdnFailures = [];
+        window.__cdnFail = function (key) { if (window.__cdnFailures.indexOf(key) === -1) window.__cdnFailures.push(key); };
+    </script>
+    <script src="https://cdn.tailwindcss.com" onerror="__cdnFail('tailwind')"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" onerror="__cdnFail('marked')"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" onerror="__cdnFail('fontawesome')">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" onerror="__cdnFail('xlsx')"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js" onerror="__cdnFail('mammoth')"></script>
 
     <style>
         body { overflow: hidden; }
@@ -27,21 +32,56 @@
         #chat-output .msg-user { border-left: 3px solid #3b82f6; padding-left: 8px; }
         #chat-output .msg-ai { border-left: 3px solid #a855f7; padding-left: 8px; }
         #chat-output .msg-system { border-left: 3px solid #22c55e; padding-left: 8px; }
+        /* Lange, nicht umbrechbare Strings (URLs, Error-Texte) dürfen das Layout nicht sprengen */
+        #chat-output { overflow-wrap: anywhere; word-break: break-word; }
+
+        /* Offline-/CDN-Fehlerbanner */
+        #cdn-banner {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+            background: #7f1d1d; color: #fecaca; border-bottom: 2px solid #ef4444;
+            padding: 10px 14px; font-size: 13px; line-height: 1.45;
+            display: flex; gap: 10px; align-items: flex-start; justify-content: space-between;
+        }
+        #cdn-banner button {
+            background: none; border: 1px solid #fca5a5; color: #fecaca; border-radius: 4px;
+            padding: 2px 8px; cursor: pointer; flex-shrink: 0; font-size: 12px;
+        }
+
+        /* Mobile: Sidebar wird zum Drawer */
+        #sidebar-toggle, #sidebar-close { display: none; }
+        #sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 45; }
+        .hide-below-sm { display: none; }
+        @media (min-width: 640px) { .hide-below-sm { display: inline-block; } }
+        @media (max-width: 767px) {
+            #sidebar {
+                position: fixed; top: 0; left: 0; bottom: 0; width: 264px; z-index: 50;
+                transform: translateX(-100%); transition: transform 0.2s ease;
+                box-shadow: none;
+            }
+            #sidebar.open { transform: translateX(0); box-shadow: 4px 0 24px rgba(0,0,0,0.5); }
+            #sidebar-toggle { display: inline-flex; }
+            #sidebar-close { display: inline-block; }
+            .header-controls { width: 100%; }
+            .header-controls > * { flex: 1; }
+        }
     </style>
 </head>
 <body class="bg-gray-950 text-gray-100 h-screen flex flex-col font-sans text-sm">
 
     <header class="bg-gray-900 border-b border-gray-800 p-3 flex flex-col gap-3 shrink-0 z-50">
-        <div class="flex justify-between items-center">
-            <div class="flex items-center gap-3">
-                <h1 class="text-xl font-bold text-blue-400"><i class="fa-solid fa-hammer mr-2 text-xl"></i>BrowserForge</h1>
-                <span class="bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full font-mono">Native Web Agent v2</span>
+        <div class="flex flex-wrap gap-2 justify-between items-center">
+            <div class="flex items-center gap-3 min-w-0">
+                <h1 class="text-xl font-bold text-blue-400 whitespace-nowrap"><i class="fa-solid fa-hammer mr-2 text-xl"></i>BrowserForge</h1>
+                <span class="hide-below-sm bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full font-mono whitespace-nowrap">Native Web Agent v2</span>
             </div>
-            <div class="flex gap-2">
+            <div class="header-controls flex gap-2 flex-wrap">
+                <button id="sidebar-toggle" onclick="toggleSidebar()" class="bg-gray-700 hover:bg-gray-600 text-white font-bold py-1.5 px-3 rounded text-xs transition" title="Toggle file explorer">
+                    <i class="fa-solid fa-bars"></i>
+                </button>
                 <button onclick="createNewFile()" class="bg-gray-700 hover:bg-gray-600 text-white font-bold py-1.5 px-3 rounded text-xs transition" title="Create new file">
                     <i class="fa-solid fa-file-circle-plus mr-1"></i> New File
                 </button>
-                <button onclick="mountFolder()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-1.5 px-4 rounded text-xs transition shadow-lg">
+                <button onclick="mountFolder()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-1.5 px-4 rounded text-xs transition shadow-lg whitespace-nowrap">
                     <i class="fa-regular fa-folder-open mr-1"></i> Mount Workspace
                 </button>
             </div>
@@ -89,18 +129,20 @@
     </header>
 
     <div class="flex flex-1 overflow-hidden">
-        <aside class="w-60 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0">
+        <aside id="sidebar" class="w-60 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0">
             <div class="p-2.5 bg-gray-950 border-b border-gray-800 text-xs font-bold uppercase text-gray-500 tracking-wider flex justify-between items-center">
                 <span>FILES</span>
-                <div class="flex gap-2">
+                <div class="flex gap-2 items-center">
                     <button onclick="createNewFile()" title="New File"><i class="fa-solid fa-plus hover:text-white transition text-[10px]"></i></button>
                     <button onclick="refreshFileTree()" title="Refresh"><i class="fa-solid fa-sync hover:text-white transition text-[10px]"></i></button>
+                    <button id="sidebar-close" onclick="closeSidebar()" title="Close" class="text-gray-500 hover:text-white transition text-[10px]"><i class="fa-solid fa-xmark"></i></button>
                 </div>
             </div>
             <div id="file-tree" class="flex-1 overflow-y-auto p-1.5 space-y-0.5 text-gray-400">
                 <div class="text-center text-gray-600 mt-10 italic">No folder loaded.</div>
             </div>
         </aside>
+        <div id="sidebar-backdrop" onclick="closeSidebar()"></div>
 
         <main class="flex-1 flex flex-col min-w-0 bg-[#1e1e1e] relative">
             <div class="drop-overlay" id="drop-overlay"><i class="fa-solid fa-cloud-arrow-up mr-2"></i> Drop file here</div>
@@ -157,7 +199,7 @@
         </div>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" onerror="__cdnFail('require')"></script>
     <script>
         // =========================================================
         //  GLOBAL VARIABLES
@@ -241,9 +283,9 @@
                 url: 'https://api.deepseek.com/v1',
                 apiStyle: 'openai',
                 models: [
-                    { value: 'deepseek-v3.2',    label: '⭐ DeepSeek-V3.2 (Flagship)' },
-                    { value: 'deepseek-chat',     label: 'DeepSeek Chat (V3 Alias)' },
-                    { value: 'deepseek-reasoner', label: 'DeepSeek-R1 (Reasoner)' },
+                    // Verifiziert gegen GET /v1/models (Okt 2026): nur diese zwei IDs existieren.
+                    { value: 'deepseek-v4-pro', label: '⭐ DeepSeek V4 Pro (Flagship)' },
+                    { value: 'deepseek-flash',   label: 'DeepSeek Flash' },
                 ]
             },
             qwen: {
@@ -339,8 +381,7 @@
                 }
                 if (e.ctrlKey && e.key === 's') {
                     e.preventDefault();
-                    saveCurrentTextFile();
-                    showSavedStatus();
+                    saveCurrentTextFile().then(ok => ok ? showSavedStatus() : markUnsaved());
                 }
             });
             document.getElementById('user-prompt').addEventListener('keypress', (e) => {
@@ -434,22 +475,35 @@
         // =========================================================
         //  MONACO EDITOR
         // =========================================================
-        require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.39.0/min/vs' } });
-        require(['vs/editor/editor.main'], function () {
-            editor = monaco.editor.create(document.getElementById('monaco-editor'), {
-                value: '', theme: 'vs-dark', automaticLayout: true,
-                minimap: { enabled: true }, fontSize: 11,
-                wordWrap: 'on', smoothScrolling: true,
-                cursorBlinking: 'smooth', cursorSmoothCaretAnimation: 'on',
-                bracketPairColorization: { enabled: true },
+        // Ohne require.js/Monaco (CDN offline) bleibt der Rest der App nutzbar:
+        // Dateibaum, Chat, XLSX/DOCX/PDF-Vorschau funktionieren weiter; nur der Code-Editor fehlt.
+        window.__monacoLoaded = false;
+        if (typeof require === 'function') {
+            require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.39.0/min/vs' } });
+            require(['vs/editor/editor.main'], function () {
+                editor = monaco.editor.create(document.getElementById('monaco-editor'), {
+                    value: '', theme: 'vs-dark', automaticLayout: true,
+                    minimap: { enabled: true }, fontSize: 11,
+                    wordWrap: 'on', smoothScrolling: true,
+                    cursorBlinking: 'smooth', cursorSmoothCaretAnimation: 'on',
+                    bracketPairColorization: { enabled: true },
+                });
+                window.__monacoLoaded = true;
+                editor.onDidChangeModelContent(() => {
+                    if (isLoadingFile) return;
+                    updateStatusBar();
+                    markUnsaved();
+                    debouncedSave();
+                });
+            }, function () {
+                // Monaco-Modul selbst nicht ladbar (CDN blockiert)
+                window.__cdnFail('monaco');
+                appendToChat('System (Error)', '❌ Monaco Editor konnte nicht geladen werden (CDN nicht erreichbar). Textdateien können nicht angezeigt werden.', true);
+                showCdnBanner();
             });
-            editor.onDidChangeModelContent(() => {
-                if (isLoadingFile) return;
-                updateStatusBar();
-                markUnsaved();
-                debouncedSave();
-            });
-        });
+        } else {
+            window.__cdnFail('require');
+        }
 
         let saveTimeout;
         let isLoadingFile = false;
@@ -625,6 +679,9 @@
             if (currentActiveFilePath === path) return;
             const ext = path.split('.').pop().toLowerCase();
 
+            // Mobile: Drawer nach Dateiauswahl schließen
+            closeSidebar();
+
             document.getElementById('main-overlay').style.display = 'none';
             document.getElementById('office-data-container').classList.add('hidden');
             document.getElementById('image-preview-container').classList.add('hidden');
@@ -653,6 +710,10 @@
                 appendToChat('System', `🖼️ Image loaded: ${path} (${formatBytes(file.size)})`, true);
 
             } else if (['xlsx', 'xls'].includes(ext)) {
+                if (typeof XLSX === 'undefined') {
+                    appendToChat('System (Error)', '❌ Excel-Vorschau nicht verfügbar: SheetJS-CDN konnte nicht geladen werden.', true);
+                    return;
+                }
                 hideCodeEditor();
                 document.getElementById('office-data-container').classList.remove('hidden');
                 const reader = new FileReader();
@@ -682,6 +743,10 @@
                 appendToChat('System', `📊 Excel loaded: ${path}`, true);
 
             } else if (ext === 'docx') {
+                if (typeof mammoth === 'undefined') {
+                    appendToChat('System (Error)', '❌ Word-Vorschau nicht verfügbar: Mammoth-CDN konnte nicht geladen werden.', true);
+                    return;
+                }
                 hideCodeEditor();
                 document.getElementById('office-data-container').classList.remove('hidden');
                 const reader = new FileReader();
@@ -713,6 +778,10 @@
                 appendToChat('System', `📄 PDF loaded: ${path}`, true);
 
             } else {
+                if (!editor) {
+                    appendToChat('System (Error)', '❌ Editor nicht verfügbar (Monaco-CDN nicht geladen). Textdateien können nicht angezeigt werden.', true);
+                    return;
+                }
                 showCodeEditor();
                 const text = await file.text();
                 const langMap = {
@@ -749,6 +818,7 @@
 
         async function saveCurrentTextFile() {
             if (!currentActiveFilePath || isNonTextFile(currentActiveFilePath)) return false;
+            if (!editor) return false;
             try {
                 const handle = fileHandles.get(currentActiveFilePath);
                 if (!handle) return false;
@@ -849,7 +919,10 @@
             div.className = `mb-3 pb-2 border-b border-gray-900 ${sender === 'User' ? 'msg-user' : isSystem ? 'msg-system' : 'msg-ai'}`;
 
             const color = sender === 'User' ? 'text-blue-400' : (isSystem ? 'text-green-500' : 'text-purple-400');
-            const content = sender === 'BrowserForge' ? sanitizeHtml(marked.parse(message)) : escapeHtml(message);
+            // AI-Markdown nur rendern, wenn marked geladen ist; alles andere strikt escapen (XSS-Schutz)
+            const content = (sender === 'BrowserForge' && typeof marked !== 'undefined')
+                ? sanitizeHtml(marked.parse(message))
+                : escapeHtml(message);
             const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
             div.innerHTML = `
@@ -1040,6 +1113,7 @@ Always reply in English.`;
                 headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
                 body: JSON.stringify(payload)
             });
+            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — please check the endpoint URL.`);
             const data = await res.json();
             if (data.error) throw new Error(data.error.message);
             if (!data.candidates || !data.candidates[0]) throw new Error('No response received from the model.');
@@ -1084,6 +1158,7 @@ Always reply in English.`;
                 headers: headers,
                 body: JSON.stringify(payload)
             });
+            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — please check the endpoint URL.`);
             const data = await res.json();
             if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
             if (data.content && data.content[0]) return data.content[0].text;
@@ -1109,6 +1184,7 @@ Always reply in English.`;
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
+            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — please check the endpoint URL.`);
             const data = await res.json();
             if (data.error) throw new Error(data.error);
             return data.response;
@@ -1142,6 +1218,7 @@ Always reply in English.`;
                 headers: headers,
                 body: JSON.stringify(payload)
             });
+            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — please check the endpoint URL.`);
             const data = await res.json();
             if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
             return data.choices[0].message.content;
@@ -1267,6 +1344,71 @@ Always reply in English.`;
                 await refreshFileTree();
             }
         }
+
+        // =========================================================
+        //  MOBILE SIDEBAR (Drawer)
+        // =========================================================
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const isOpen = sidebar.classList.toggle('open');
+            document.getElementById('sidebar-backdrop').style.display = isOpen ? 'block' : 'none';
+        }
+
+        function closeSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar) return;
+            sidebar.classList.remove('open');
+            document.getElementById('sidebar-backdrop').style.display = 'none';
+        }
+
+        // =========================================================
+        //  OFFLINE / CDN-FAILURE DETECTION
+        // =========================================================
+        const CDN_LABELS = {
+            tailwind: 'Tailwind CSS (page styling)',
+            marked: 'marked (markdown rendering)',
+            fontawesome: 'Font Awesome (icons)',
+            xlsx: 'SheetJS (Excel preview)',
+            mammoth: 'Mammoth (Word preview)',
+            require: 'require.js (Monaco editor loader)',
+            monaco: 'Monaco Editor (code editing)',
+        };
+
+        function showCdnBanner() {
+            if (document.getElementById('cdn-banner')) return;
+            if (!window.__cdnFailures.length) return;
+            const names = window.__cdnFailures.map(k => CDN_LABELS[k] || k);
+            const banner = document.createElement('div');
+            banner.id = 'cdn-banner';
+            const text = document.createElement('span');
+            text.textContent = '⚠️ Offline / CDN failure — BrowserForge could not load: ' + names.join(', ') +
+                '. Check your internet connection and reload the page. File tree, chat and PDF preview still work; the listed features are unavailable.';
+            const dismiss = document.createElement('button');
+            dismiss.textContent = '✕ Dismiss';
+            dismiss.onclick = () => banner.remove();
+            banner.appendChild(text);
+            banner.appendChild(dismiss);
+            document.body.prepend(banner);
+        }
+
+        function checkCdnAvailability() {
+            // Globals prüfen (auch wenn onerror-Attribute nicht feueren, z. B. bei blockierten CDNs)
+            if (typeof window.tailwind === 'undefined') window.__cdnFail('tailwind');
+            if (typeof window.marked === 'undefined') window.__cdnFail('marked');
+            if (typeof window.XLSX === 'undefined') window.__cdnFail('xlsx');
+            if (typeof window.mammoth === 'undefined') window.__cdnFail('mammoth');
+            if (typeof window.require === 'undefined') window.__cdnFail('require');
+            showCdnBanner();
+        }
+
+        checkCdnAvailability();
+        // Monaco lädt asynchron über require.js — spät noch einmal prüfen.
+        setTimeout(() => {
+            if (typeof require !== 'undefined' && !window.__monacoLoaded) {
+                window.__cdnFail('monaco');
+                showCdnBanner();
+            }
+        }, 6000);
     </script>
 </body>
 </html>
